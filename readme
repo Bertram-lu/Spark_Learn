@@ -1,0 +1,74 @@
+任务的划分：
+ShuffleMapStage(1) => ShuffleMapTask(N) => shuffle write
+                                        => shuffle read
+ResultStage(1)     => ResultTask(N)     => shuffle read
+
+任务的封装：
+Task => TaskSet => TaskSetManager => TaskPool
+
+任务调度器(默认使用FIFO)
+FIFO : 先进先出
+FAIR : 公平 （runningTasks, minShare, weight）sortWith
+
+任务本地化级别：
+PROCESS_LOCAL : 内存数据的数据处理
+NODE_LOCAL    : yarn集群的方式访问HDFS文件
+RACK_LOCAL
+Any
+
+任务的执行
+Driver => encode(Task) => RPC => ExecutorBackend => decode(Task) => Executor
+Executor => ThreadPool => TaskRunner => run => Task.run => XXXTask.runTask
+
+Shuffle管理器 :
+SortShuffleManager
+
+Shuffle Writer:
+1.UnsafeShuffleWriter => SerializedShuffleHandle
+2.BypassMergeSortShuffleWriter => BypassMergeSortShuffleHandle
+
+    没有预聚合功能 & reduce阶段的分区数量 <= 阈值（200）
+
+    有预聚合功能的算子   : reduceByKey combineByKey, aggregateByKey, foldByKey
+    没有预聚合功能的算子 : groupByKey sortByKey
+
+    实现方式类似于HashShuffle
+
+3.SortShuffleWriter => BaseShuffleHandle
+
+    写磁盘文件时，首席会按照分区进行排序，然后默认按照key.hashCode排序
+    排序时，如果超过内存阈值 ：5m
+
+预聚合的原理： 在shuffle落盘之前的聚合功能
+PartitionedAppendOnlyMap => Hashtable => ( (分区ID，Key)， value )
+不支持预聚合
+PartitionedPairBuffer => ( (分区ID，Key)， value )
+
+Spark内存
+静态内存管理：
+    存储内存：
+    val systemMaxMemory = conf.getLong("spark.testing.memory", Runtime.getRuntime.maxMemory)
+    val memoryFraction = conf.getDouble("spark.storage.memoryFraction", 0.6)
+    val safetyFraction = conf.getDouble("spark.storage.safetyFraction", 0.9)
+    (systemMaxMemory * memoryFraction * safetyFraction).toLong
+    执行内存：
+    val systemMaxMemory = conf.getLong("spark.testing.memory", Runtime.getRuntime.maxMemory)
+    val memoryFraction = conf.getDouble("spark.shuffle.memoryFraction", 0.2)
+    val safetyFraction = conf.getDouble("spark.shuffle.safetyFraction", 0.8)
+    (systemMaxMemory * memoryFraction * safetyFraction).toLong
+统一内存管理
+    存储内存：
+     val usableMemory = systemMemory - reservedMemory
+     val memoryFraction = conf.getDouble("spark.memory.fraction", 0.6)
+     maxMemory = (usableMemory * memoryFraction).toLong
+    onHeapStorageRegionSize =
+        (maxMemory * conf.getDouble("spark.memory.storageFraction", 0.5)).toLong,
+    执行内存：
+
+Spark配置：
+spark.scheduler.mode : 任务调度器，默认为FIFO，可以改为FAIR
+spark.locality.wait: 本地化等待时间，默认3s
+spark.shuffle.sort.bypassMergeThreshold : 忽略排序的阈值
+spark.local.dir : 本地文件存储路径
+spark.shuffle.spill.batchSize : 溢写磁盘的数据量 10000
+spark.memory.useLegacyMode : 内存管理兼容模式
